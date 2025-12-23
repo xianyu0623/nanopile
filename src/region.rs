@@ -52,23 +52,54 @@ impl FromStr for Region {
 }
 
 pub fn parse_bed_file<P: AsRef<Path>>(path: P) -> Result<Vec<Region>> {
-    let file = File::open(path)?;
+    let path_ref = path.as_ref();
+    let file = File::open(path_ref).with_context(|| {
+        format!(
+            "Failed to open BED file located at '{}'",
+            path_ref.display()
+        )
+    })?;
     let reader = BufReader::new(file);
     let mut regions = Vec::new();
 
-    for line in reader.lines() {
-        let line = line?;
+    for (line_idx, line_res) in reader.lines().enumerate() {
+        let line_no = line_idx + 1;
+        let line = line_res.with_context(|| {
+            format!(
+                "Failed to read line {} from BED file '{}'",
+                line_no,
+                path_ref.display()
+            )
+        })?;
         if line.trim().is_empty() || line.starts_with('#') {
             continue;
         }
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 3 {
+            eprintln!(
+                "Warning: skipping malformed BED line {} in '{}': {}",
+                line_no,
+                path_ref.display(),
+                line
+            );
             continue;
         }
 
         let chrom = fields[0].to_string();
-        let start: usize = fields[1].parse().context("Invalid BED start")?;
-        let end: usize = fields[2].parse().context("Invalid BED end")?;
+        let start: usize = fields[1].parse().with_context(|| {
+            format!(
+                "Invalid BED start coordinate at line {} in '{}'",
+                line_no,
+                path_ref.display()
+            )
+        })?;
+        let end: usize = fields[2].parse().with_context(|| {
+            format!(
+                "Invalid BED end coordinate at line {} in '{}'",
+                line_no,
+                path_ref.display()
+            )
+        })?;
 
         regions.push(Region::new(chrom, start, end));
     }

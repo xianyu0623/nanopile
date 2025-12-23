@@ -58,6 +58,38 @@ Use these flags to include additional information in the output:
 | `--output_mapq` | Output Mapping Quality scores |
 | `--output_read_name` | Output Read Names |
 
+## Python API
+
+The core pileup engine is also available from Python behind an optional feature flag.
+
+1. Install [maturin](https://www.maturin.rs/) once (e.g. `pip install maturin`).
+2. From the repository root run:
+
+   ```bash
+   maturin develop --release --features python
+   ```
+
+   This builds and installs the `nanopile` extension module into your current Python environment.
+
+3. Call the binding from Python:
+
+   ```python
+   import nanopile
+
+   pileup = nanopile.run_nanopile(
+       bam_fp="reads.bam",
+       ref_fp="reference.fa",
+       regions=["chr1:1000-1100"],
+       output_bq=True,
+       output_read_name=True,
+   )
+
+   for pos in pileup:
+       print(pos.chrom, pos.pos + 1, pos.depth, pos.bases)
+   ```
+
+`run_nanopile` mirrors the CLI flags: you must provide either `bed_fp` or `regions`, and you can toggle the optional outputs with the same boolean parameters. The function returns a Python `list` of `PyPileupPos` objects, so every position can be iterated over and its attributes accessed directly (`bases`, `read_names`, `map_qualities`, `quality_scores`, `mv_values`).
+
 ## Help
 
 To see the full list of options, run:

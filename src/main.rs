@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use std::path::PathBuf;
 
@@ -103,11 +103,16 @@ fn main() -> Result<()> {
 
     // Parse regions
     let regions = if let Some(bed_fp) = args.bed_fp {
-        region::parse_bed_file(&bed_fp)?
+        region::parse_bed_file(&bed_fp).with_context(|| {
+            format!("Failed to parse BED file located at '{}'", bed_fp.display())
+        })?
     } else if let Some(region_strs) = args.region {
         region_strs
             .iter()
-            .map(|s| s.parse())
+            .map(|s| {
+                s.parse()
+                    .with_context(|| format!("Failed to parse region string '{}'", s))
+            })
             .collect::<Result<Vec<region::Region>>>()?
     } else {
         unreachable!("Either region or bed_fp must be provided");
@@ -115,6 +120,7 @@ fn main() -> Result<()> {
 
     for region in regions {
         // println!("Region: {:?}", region);
+        let region_label = format!("{}:{}-{}", region.chromosome, region.start + 1, region.end);
         let results = nanopileup::nanopileup(
             &args.bam_fp,
             &region,
@@ -128,7 +134,8 @@ fn main() -> Result<()> {
             args.output_mapq,
             args.output_read_name,
             args.output_mv,
-        )?;
+        )
+        .with_context(|| format!("Failed to run nanopileup for {}", region_label))?;
 
         for p in results {
             let bases_str = p.bases.join("");

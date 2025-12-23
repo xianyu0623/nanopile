@@ -3,9 +3,16 @@ name = "nanopile"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+python = ["dep:pyo3", "pyo3/extension-module"]
+
 [dependencies]
 anyhow = "1.0.100"
 clap = { version = "4.5.53", features = ["derive"] }
-pyo3 = "0.27.1"
+pyo3 = { version = "0.27.1", optional = true }
 rayon = "1.11.0"
 rust-htslib = "0.51.0"

@@ -1,5 +1,5 @@
 use crate::region;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rust_htslib::bam::{self, Read};
 use rust_htslib::faidx;
 use std::collections::HashMap;
@@ -23,7 +23,6 @@ pub struct CachedRead {
     pub _read_id: String,
     pub ref_start: i64,
     pub ref_end: i64,
-    pub mapq: u8,
     pub seq_data: Vec<Option<BaseInfo>>,
 }
 
@@ -35,7 +34,6 @@ impl CachedRead {
                 _read_id: String::from_utf8_lossy(record.qname()).to_string(),
                 ref_start: record.pos(),
                 ref_end: record.cigar().end_pos(),
-                mapq: record.mapq(),
                 seq_data: vec![],
             });
         }
@@ -188,7 +186,6 @@ impl CachedRead {
             _read_id: read_id,
             ref_start,
             ref_end,
-            mapq,
             seq_data,
         })
     }
@@ -265,20 +262,50 @@ pub fn nanopileup(
     output_read_name: bool,
     output_mv: bool,
 ) -> Result<Vec<PileupPos>> {
-    let mut bam = bam::IndexedReader::from_path(bam_path)?;
+    let mut bam = bam::IndexedReader::from_path(bam_path).with_context(|| {
+        format!(
+            "Failed to open indexed BAM file located at '{}'",
+            bam_path.display()
+        )
+    })?;
     // let _header = bam.header().clone(); // Clone needed?
+
+    let start = region.start;
+    let end = region.end;
+    let region_label = format!("{}:{}-{}", region.chromosome, start + 1, end);
+
+    if end <= start {
+        return Err(anyhow::anyhow!(
+            "Region '{}' is empty or invalid (end <= start)",
+            region_label
+        ));
+    }
 
     // Load reference sequence for the region
     let ref_seq = if let Some(path) = ref_fp {
         if path.exists() {
-            let fa_reader = faidx::Reader::from_path(path)?;
-            // fetch_seq returns Ok(Vec<u8>)
-            Some(fa_reader.fetch_seq_string(
-                &region.chromosome,
-                region.start as usize,
-                region.end as usize - 1,
-            )?)
+            let fa_reader = faidx::Reader::from_path(path).with_context(|| {
+                format!(
+                    "Failed to open reference FASTA located at '{}'",
+                    path.display()
+                )
+            })?;
+            Some(
+                fa_reader
+                    .fetch_seq_string(&region.chromosome, start, end - 1)
+                    .with_context(|| {
+                        format!(
+                            "Failed to fetch reference subsequence for {} from '{}'",
+                            region_label,
+                            path.display()
+                        )
+                    })?,
+            )
         } else {
+            eprintln!(
+                "Warning: reference FASTA '{}' was not found; continuing without reference sequence.",
+                path.display()
+            );
             None
         }
     } else {
@@ -287,9 +314,6 @@ pub fn nanopileup(
 
     let mut cache = ReadCache::new();
     let mut results = Vec::new();
-
-    let start = region.start;
-    let end = region.end;
 
     for window_start in (start..end).step_by(buffer_size) {
         // println!("Window start: {}", window_start);
@@ -303,11 +327,26 @@ pub fn nanopileup(
             region.chromosome.as_bytes(),
             fetch_start as i64,
             fetch_end as i64,
-        ))?;
+        ))
+        .with_context(|| {
+            format!(
+                "Failed to fetch BAM records for {}:{}-{} (including margin)",
+                region.chromosome,
+                fetch_start + 1,
+                fetch_end
+            )
+        })?;
 
         for result in bam.records() {
             // println!("Record: {:?}", result);
-            let record = result?;
+            let record = result.with_context(|| {
+                format!(
+                    "Failed to read BAM record while processing window {}:{}-{}",
+                    region.chromosome,
+                    window_start + 1,
+                    window_end
+                )
+            })?;
             // Skip if already in cache
             let read_id = String::from_utf8_lossy(record.qname()).to_string();
             if cache.reads.contains_key(&read_id) {
@@ -329,7 +368,12 @@ pub fn nanopileup(
                 continue;
             }
 
-            let cached_read = CachedRead::new(&record, output_mv)?;
+            let cached_read = CachedRead::new(&record, output_mv).with_context(|| {
+                format!(
+                    "Failed to cache read '{}' while processing region {}",
+                    read_id, region_label
+                )
+            })?;
             // println!("Cached read: {:?}", cached_read);
             cache.reads.insert(read_id, cached_read);
         }
